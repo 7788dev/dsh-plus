@@ -35,6 +35,15 @@ export const VISION_NS = 'settings.vision'
 /** Services required by the Settings registration; remotes are mounted in apply. */
 export const inject = ['slots', 'locale', 'remote']
 
+/** One Typert package per npm package — a second $mount with the same name throws. */
+const pluginRemote = {
+  package: 'dsh-plus',
+  descriptors: [
+    ...mcpSettingsRemote.descriptors,
+    ...visionBridgeRemote.descriptors,
+  ],
+}
+
 type RemoteResult<T> =
   | { readonly ok: true; readonly value: T }
   | { readonly ok: false; readonly error: { readonly code: string; readonly message: string } }
@@ -55,11 +64,6 @@ type VisionBridgeRemote = {
   }) => Promise<RemoteResult<VisionTestResult>>
 }
 
-type PluginRemote = {
-  mcpSettings?: McpSettingsRemote
-  visionBridge?: VisionBridgeRemote
-}
-
 async function wrap<T>(result: Promise<RemoteResult<T>>, name: string): Promise<T> {
   const resolved = await result
   if (!resolved.ok) {
@@ -73,14 +77,13 @@ async function wrap<T>(result: Promise<RemoteResult<T>>, name: string): Promise<
  * @param ctx - browser plugin context carrying slots, locale, and the Client Remote.
  */
 export async function apply(ctx: ClientContext): Promise<void> {
-  const remote = ctx.remote as ClientContext['remote'] & PluginRemote
-  if (remote.mcpSettings === undefined) {
-    const unmount = await ctx.remote.$mount(mcpSettingsRemote)
-    ctx.effect(() => unmount, 'dsh-plus: mcpSettings remote')
-  }
-  if (remote.visionBridge === undefined) {
-    const unmount = await ctx.remote.$mount(visionBridgeRemote)
-    ctx.effect(() => unmount, 'dsh-plus: visionBridge remote')
+  try {
+    const unmount = await ctx.remote.$mount(pluginRemote)
+    ctx.effect(() => unmount, 'dsh-plus: remotes')
+  } catch (error) {
+    if (!(error instanceof Error) || !error.message.includes('already registered')) {
+      throw error
+    }
   }
 
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-settings-mcp: dictionaries')
@@ -88,42 +91,44 @@ export async function apply(ctx: ClientContext): Promise<void> {
 
   const t = ctx.locale.bind(NS)
   const visionT = ctx.locale.bind(VISION_NS)
-  const mounted = ctx.remote as ClientContext['remote'] & {
-    mcpSettings: McpSettingsRemote
-    visionBridge: VisionBridgeRemote
-  }
-  const injected = (): McpSettingsTabInjected => ({
-    list: () => wrap(mounted.mcpSettings.list(), 'mcpSettings.list'),
-    upsert: async (request) => {
-      await wrap(mounted.mcpSettings.upsert(request), 'mcpSettings.upsert')
-    },
-    remove: async (serverName) => {
-      await wrap(mounted.mcpSettings.delete({ serverName }), 'mcpSettings.delete')
-    },
-  })
-  const visionInjected = (): VisionSettingsTabInjected => ({
-    snapshot: () => wrap(mounted.visionBridge.snapshot(), 'visionBridge.snapshot'),
-    save: async (request) => {
-      await wrap(mounted.visionBridge.save(request), 'visionBridge.save')
-    },
-    testConnection: (request) => wrap(mounted.visionBridge.testConnection(request), 'visionBridge.testConnection'),
-  })
+  // Nested remotes are Cordis services; read them from a fiber that injects those keys.
+  ctx.inject(['remote.mcpSettings', 'remote.visionBridge'], (inner: ClientContext) => {
+    const remotes = inner.remote as ClientContext['remote'] & {
+      mcpSettings: McpSettingsRemote
+      visionBridge: VisionBridgeRemote
+    }
+    const mcpSettings = remotes.mcpSettings
+    const visionBridge = remotes.visionBridge
+    inner.slots.inject('settings.plugins.tab', () => inner.slots.register({
+      name: 'settings.plugins.tab',
+      id: 'mcp',
+      order: 5,
+      label: () => t('tab'),
+      locale: NS,
+      inject: (): McpSettingsTabInjected => ({
+        list: () => wrap(mcpSettings.list(), 'mcpSettings.list'),
+        upsert: async (request) => {
+          await wrap(mcpSettings.upsert(request), 'mcpSettings.upsert')
+        },
+        remove: async (serverName) => {
+          await wrap(mcpSettings.delete({ serverName }), 'mcpSettings.delete')
+        },
+      }),
+    }, McpSettingsTab))
 
-  ctx.slots.inject('settings.plugins.tab', () => ctx.slots.register({
-    name: 'settings.plugins.tab',
-    id: 'mcp',
-    order: 5,
-    label: () => t('tab'),
-    locale: NS,
-    inject: injected,
-  }, McpSettingsTab))
-
-  ctx.slots.inject('settings.plugins.tab', () => ctx.slots.register({
-    name: 'settings.plugins.tab',
-    id: 'vision',
-    order: 6,
-    label: () => visionT('tab'),
-    locale: VISION_NS,
-    inject: visionInjected,
-  }, VisionSettingsTab))
+    inner.slots.inject('settings.plugins.tab', () => inner.slots.register({
+      name: 'settings.plugins.tab',
+      id: 'vision',
+      order: 6,
+      label: () => visionT('tab'),
+      locale: VISION_NS,
+      inject: (): VisionSettingsTabInjected => ({
+        snapshot: () => wrap(visionBridge.snapshot(), 'visionBridge.snapshot'),
+        save: async (request) => {
+          await wrap(visionBridge.save(request), 'visionBridge.save')
+        },
+        testConnection: (request) => wrap(visionBridge.testConnection(request), 'visionBridge.testConnection'),
+      }),
+    }, VisionSettingsTab))
+  })
 }

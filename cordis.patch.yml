@@ -1,6 +1,6 @@
 # Applied when a profile lists this package in dsh.profile.bundles.
-# One Loader row: Host default export is the mcpSettings Gateway;
-# client-modules also scans dsh.client and loads ./client in the browser.
+# Two Host rows (MCP + Vision). The browser client is a single dsh.client
+# bundle that must $mount Typert package "dsh-plus" only once.
 - insert:
     - id: mcp-settings
       name: dsh-plus
