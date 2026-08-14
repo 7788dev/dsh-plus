@@ -1,6 +1,6 @@
 import { useEffect, useId, useState, type FormEvent, type ReactNode } from 'react'
 import type { VisionBridgeSnapshot, VisionSaveRequest, VisionTestResult } from '../vision-types.ts'
-import { Button, Input } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconChevronDownOutline14, Input } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import css from './VisionSettingsTab.module.css'
 
@@ -56,6 +56,7 @@ export function VisionSettingsTab({
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
   const [notice, setNotice] = useState<VisionTestResult | { kind: 'ok'; message: string } | null>(null)
+  const [expanded, setExpanded] = useState<Readonly<Record<string, boolean>>>({})
 
   useEffect(() => {
     let current = true
@@ -189,36 +190,65 @@ export function VisionSettingsTab({
           {state.snapshot.catalog.length === 0 ? <p className={css.status}>{t('emptyCatalog')}</p> : null}
           {state.snapshot.catalog.length > 0 ? (
             <ul className={css.groups}>
-              {state.snapshot.catalog.map((group) => (
-                <li key={group.provider} className={css.card}>
-                  <div className={css.cardHeader}>
-                    <strong className={css.cardTitle}>{group.providerName}</strong>
-                    <span className={css.providerId}>{group.provider}</span>
-                  </div>
-                  <div className={css.models}>
-                    {group.models.map((entry) => {
-                      const key = targetKey(group.provider, entry.id)
-                      return (
-                        <label key={entry.id} className={css.check}>
-                          <input
-                            type="checkbox"
-                            disabled={entry.nativeVision}
-                            checked={entry.nativeVision || enabled[key] === true}
-                            onChange={(event) => {
-                              const checked = event.currentTarget.checked
-                              setEnabled(current => ({ ...current, [key]: checked }))
-                            }}
-                          />
-                          <span className={css.checkLabel}>{entry.name}</span>
-                          <span className={css.configTag}>
-                            {entry.nativeVision ? t('nativeTag') : t('wrapTag')}
-                          </span>
-                        </label>
-                      )
-                    })}
-                  </div>
-                </li>
-              ))}
+              {state.snapshot.catalog.map((group) => {
+                const wrapCount = group.models.filter(entry => (
+                  !entry.nativeVision && enabled[targetKey(group.provider, entry.id)] === true
+                )).length
+                const isOpen = expanded[group.provider] ?? wrapCount > 0
+                const modelsId = `${formId}-models-${group.provider}`
+                return (
+                  <li key={group.provider} className={css.card}>
+                    <button
+                      type="button"
+                      className={css.cardHeader}
+                      aria-expanded={isOpen}
+                      aria-controls={modelsId}
+                      aria-label={`${t(isOpen ? 'collapse' : 'expand')}: ${group.providerName}`}
+                      onClick={() => {
+                        setExpanded(current => ({ ...current, [group.provider]: !isOpen }))
+                      }}
+                    >
+                      <strong className={css.cardTitle}>{group.providerName}</strong>
+                      <span className={css.headerMeta}>
+                        <span className={css.providerId}>{group.provider}</span>
+                        <span className={css.modelCount}>
+                          {`${String(group.models.length)} ${t('modelCountUnit')}`}
+                        </span>
+                        {wrapCount > 0 ? (
+                          <span className={css.configTag}>{`${String(wrapCount)} ${t('wrapTag')}`}</span>
+                        ) : null}
+                        <IconChevronDownOutline14
+                          className={isOpen ? `${css.chevron} ${css.chevronOpen}` : css.chevron}
+                        />
+                      </span>
+                    </button>
+                    {isOpen ? (
+                      <div className={css.models} id={modelsId}>
+                        {group.models.map((entry) => {
+                          const key = targetKey(group.provider, entry.id)
+                          return (
+                            <label key={entry.id} className={css.check}>
+                              <input
+                                type="checkbox"
+                                disabled={entry.nativeVision}
+                                checked={entry.nativeVision || enabled[key] === true}
+                                onChange={(event) => {
+                                  const checked = event.currentTarget.checked
+                                  setEnabled(current => ({ ...current, [key]: checked }))
+                                }}
+                              />
+                              <span className={css.checkLabel}>{entry.name}</span>
+                              <span className={css.configTag}>
+                                {entry.nativeVision ? t('nativeTag') : t('wrapTag')}
+                              </span>
+                            </label>
+                          )
+                        })}
+                      </div>
+                    ) : null}
+                  </li>
+                )
+              })}
             </ul>
           ) : null}
           {notice !== null ? (

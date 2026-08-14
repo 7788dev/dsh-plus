@@ -139,6 +139,7 @@
 }
 
 .cardHeader {
+  appearance: none;
   box-sizing: border-box;
   display: flex;
   align-items: center;
@@ -146,8 +147,52 @@
   gap: 12px;
   width: 100%;
   min-height: 44px;
+  margin: 0;
   padding: 10px 14px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cardHeader[aria-expanded='true'] {
   border-bottom: 1px solid var(--dsw-alias-border-l2);
+}
+
+.cardHeader:hover {
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.cardHeader:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: -2px;
+}
+
+.headerMeta {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.modelCount {
+  font-size: 12px;
+  line-height: 18px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.chevron {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+  transition: transform 0.16s ease;
+}
+
+.chevronOpen {
+  transform: rotate(180deg);
 }
 
 .cardTitle {

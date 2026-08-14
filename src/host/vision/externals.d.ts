@@ -11,9 +11,19 @@ declare module '@deepseek-ai/cordis' {
     llm: import('@deepseek-ai/dsh-llm').LlmRuntimeLike
     attachments: {
       readImage(
-        ref: { attachmentId: string; mediaType: string; name?: string },
+        ref: {
+          attachmentId: string
+          mediaType: string
+          bytes: number
+          width: number
+          height: number
+          name?: string
+        },
         signal?: AbortSignal,
       ): Promise<{ ref: { mediaType: string }; data: Uint8Array }>
+    }
+    tools: {
+      register(definition: unknown): () => void
     }
     logger: { warn(message: string): void }
     get(name: string): unknown
@@ -21,6 +31,10 @@ declare module '@deepseek-ai/cordis' {
       options: import('@deepseek-ai/dsh-llm').GenerateOptions,
       next: () => AsyncIterable<import('@deepseek-ai/dsh-llm').StreamChunk>,
     ) => AsyncIterable<import('@deepseek-ai/dsh-llm').StreamChunk>): void
+    on(event: 'tools/pre-execute', listener: (
+      exec: { name: string },
+      next: () => Promise<{ kind: 'allow' } | { kind: 'deny'; reason: string } | { kind: 'ask'; reason?: string }>,
+    ) => Promise<{ kind: 'allow' } | { kind: 'deny'; reason: string } | { kind: 'ask'; reason?: string }>): void
     effect(dispose: () => void | (() => void), name?: string): void
   }
 }
@@ -66,6 +80,9 @@ declare module '@deepseek-ai/dsh-llm' {
       attachment: {
         attachmentId: string
         mediaType: string
+        bytes: number
+        width: number
+        height: number
         name?: string
       }
     }
@@ -85,7 +102,7 @@ declare module '@deepseek-ai/dsh-llm' {
     reasoningEffort?: string
     messages: Message[]
     system?: string
-    tools?: unknown[]
+    tools?: { name: string; description?: string; parameters?: unknown }[]
     temperature?: number
     maxTokens?: number
     stop?: string[]
@@ -93,7 +110,21 @@ declare module '@deepseek-ai/dsh-llm' {
     sessionId?: string
     purpose?: 'compaction' | 'session-title'
   }
-  export type StreamChunk = { type: string }
+  export type StreamChunk =
+    | { type: 'block-start'; index: number; blockType: 'text' | 'reasoning' | 'image' | 'tool-call' | 'tool-result' }
+    | { type: 'text-delta'; index: number; text: string }
+    | { type: 'reasoning-delta'; index: number; text: string }
+    | { type: 'tool-call-delta'; index: number; id: string; name?: string; argumentsDelta: string }
+    | { type: 'block-end'; index: number; block: ContentBlock }
+    | { type: 'usage'; usage: unknown }
+    | {
+      type: 'finish'
+      reason: {
+        kind: 'stop' | 'tool-calls' | 'max-tokens' | 'aborted' | 'error'
+        failure?: { message: string; code: string }
+      }
+      replayState?: unknown
+    }
   export interface LlmResolvedModelInfo {
     provider: string
     id: string
@@ -108,4 +139,22 @@ declare module '@deepseek-ai/dsh-llm' {
   }
   export function contentHasImage(content: readonly ContentBlock[]): boolean
   export function freezeMessage<T extends Message>(message: T): T
+  export function CallId(id: string): string
+}
+
+declare module '@deepseek-ai/dsh-tools' {
+  export function defineTool(options: {
+    name: string
+    description: string
+    parameters: Record<string, unknown>
+    output: {
+      schema: unknown
+      render: (args: unknown, value: unknown) => unknown[]
+    }
+    timeoutMs?: number
+    isConcurrencySafe?: (args: unknown) => boolean
+    execute: (args: unknown, exec: { signal: AbortSignal }) => Promise<unknown>
+    presentCall?: (args: unknown) => unknown
+    presentResult?: (args: unknown, result: unknown) => unknown
+  }): unknown
 }

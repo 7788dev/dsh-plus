@@ -25,6 +25,9 @@ export const zh = {
   emptyCatalog: '当前没有可配置的模型渠道。',
   nativeTag: '原生视觉',
   wrapTag: '外挂',
+  expand: '展开',
+  collapse: '收起',
+  modelCountUnit: '个模型',
 } satisfies Record<string, string>
 
 /** Vision settings locale key union. */
@@ -55,4 +58,7 @@ export const en = {
   emptyCatalog: 'No model providers are available.',
   nativeTag: 'Native vision',
   wrapTag: 'Wrapped',
+  expand: 'Expand',
+  collapse: 'Collapse',
+  modelCountUnit: 'models',
 } satisfies Record<VisionSettingsLocaleKey, string>

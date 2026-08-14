@@ -1,10 +1,11 @@
+import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
 import { TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
-import type { GenerateOptions, LlmResolvedModelInfo, StreamChunk } from '@deepseek-ai/dsh-llm'
+import { CallId, type GenerateOptions, type LlmResolvedModelInfo, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import { captionImage, testVisionConnection, type VisionClientConfig } from './caption.ts'
 import { decorateRemoteMethods } from './native-decorate.ts'
 import {
@@ -17,7 +18,16 @@ import {
   type VisionBridgeDocument,
   type VisionTargetRecord,
 } from './document.ts'
-import { collectRequestImages, messagesHaveImage, rewriteOptions } from './rewrite.ts'
+import { defineLookAtImageTool, lookAtArgFromImage, LOOK_AT_TOOL_NAME, type LookAtImageArg } from './look-at-tool.ts'
+import {
+  allImagesCaptioned,
+  dropLookAtReplayState,
+  hasLookAtToolSinceLastUser,
+  messagesHaveImage,
+  rewriteOptions,
+  stripLookAtTool,
+  uniqueRequestImages,
+} from './rewrite.ts'
 import type {
   VisionBridgeMutationResult,
   VisionBridgeSnapshot,
@@ -50,7 +60,7 @@ function hasSection(
  * opted-in text models, and captions images before those models see the turn.
  */
 export class VisionBridgeGateway extends TypertRemoteService {
-  static inject = ['llm', 'attachments']
+  static inject = ['llm', 'attachments', 'tools']
   static Config = z.object({ path: z.string().required() })
 
   private filename: string
@@ -68,6 +78,7 @@ export class VisionBridgeGateway extends TypertRemoteService {
   async [Service.init](): Promise<void> {
     this.document = await this.readDocument()
     this.installCapabilityClaim()
+    this.installLookAtTool()
     this.ctx.on('llm/stream', (options: GenerateOptions, next: () => AsyncIterable<StreamChunk>) => {
       return this.onStream(options, next)
     })
@@ -76,9 +87,25 @@ export class VisionBridgeGateway extends TypertRemoteService {
       systemPrompt.section({
         name: 'vision-bridge',
         order: 80,
-        text: 'Images in this conversation may appear as [Image: …] text blocks. Those blocks are detailed descriptions produced by an auxiliary vision model; treat them as what the user attached.',
+        text: [
+          'Images in this conversation appear as [Image: filename] text blocks after the 识图 (look_at_image) tool runs.',
+          'Those blocks are already complete descriptions; treat them as what the user attached.',
+          'Do not call look_at_image yourself. Do not announce that you are reviewing images, and do not restate the [Image] blocks.',
+          'Answer the user\'s question directly. Your thinking stays in the normal reasoning channel.',
+        ].join(' '),
       })
     }
+  }
+
+  private installLookAtTool(): void {
+    this.ctx.effect(
+      () => this.ctx.tools.register(defineLookAtImageTool((images, signal) => this.captionRefs(images, signal))),
+      'vision-bridge: look_at_image tool',
+    )
+    this.ctx.on('tools/pre-execute', async (exec, next) => {
+      if (exec.name === LOOK_AT_TOOL_NAME) return { kind: 'allow' }
+      return next()
+    })
   }
 
   private installCapabilityClaim(): void {
@@ -126,12 +153,49 @@ export class VisionBridgeGateway extends TypertRemoteService {
     options: GenerateOptions,
     next: () => AsyncIterable<StreamChunk>,
   ): AsyncIterable<StreamChunk> {
-    if (!(await this.shouldWrap(options))) {
-      yield* next()
+    const sanitized = dropLookAtReplayState(options)
+    if (!(await this.shouldWrap(sanitized))) {
+      if (sanitized === options) {
+        yield* next()
+        return
+      }
+      yield* this.ctx.llm.stream(sanitized)
       return
     }
-    const rewritten = await this.captionAndRewrite(options)
-    yield* this.ctx.llm.stream(rewritten)
+    if (sanitized.purpose === 'compaction' || sanitized.purpose === 'session-title') {
+      yield* this.ctx.llm.stream(await this.captionAndRewrite(sanitized))
+      return
+    }
+    const alreadyCalled = hasLookAtToolSinceLastUser(sanitized.messages, LOOK_AT_TOOL_NAME)
+    const cached = allImagesCaptioned(sanitized.messages, this.captions)
+    if (!alreadyCalled && !cached) {
+      yield* this.emitLookAtCall(sanitized)
+      return
+    }
+    if (!cached) {
+      const text = '识图超时或失败，请再发一次图片。'
+      yield { type: 'block-start', index: 0, blockType: 'text' }
+      yield { type: 'text-delta', index: 0, text }
+      yield { type: 'block-end', index: 0, block: { type: 'text', text } }
+      yield { type: 'finish', reason: { kind: 'stop' } }
+      return
+    }
+    yield* this.ctx.llm.stream(stripLookAtTool(await this.captionAndRewrite(sanitized), LOOK_AT_TOOL_NAME))
+  }
+
+  private async *emitLookAtCall(options: GenerateOptions): AsyncIterable<StreamChunk> {
+    const images = uniqueRequestImages(options.messages).map(lookAtArgFromImage)
+    const args = JSON.stringify({ images })
+    const id = CallId(randomUUID())
+    const index = 0
+    yield { type: 'block-start', index, blockType: 'tool-call' }
+    yield { type: 'tool-call-delta', index, id, name: LOOK_AT_TOOL_NAME, argumentsDelta: args }
+    yield {
+      type: 'block-end',
+      index,
+      block: { type: 'tool-call', id, name: LOOK_AT_TOOL_NAME, arguments: args },
+    }
+    yield { type: 'finish', reason: { kind: 'tool-calls' } }
   }
 
   private visionConfig(): VisionClientConfig {
@@ -142,32 +206,45 @@ export class VisionBridgeGateway extends TypertRemoteService {
     return vision
   }
 
-  private async captionAndRewrite(options: GenerateOptions): Promise<GenerateOptions> {
-    const images = collectRequestImages(options.messages)
+  /** Caption each unique image; reuse cache entries when present. */
+  private async captionRefs(
+    images: readonly LookAtImageArg[],
+    signal?: AbortSignal,
+  ): Promise<ReadonlyMap<string, string>> {
     const captions = new Map<string, string>()
-    const pending: typeof images = []
-    const seen = new Set<string>()
-    for (const image of images) {
-      const id = String(image.attachment.attachmentId)
-      if (seen.has(id)) continue
-      seen.add(id)
-      const cached = this.captions.get(id)
-      if (cached !== undefined) captions.set(id, cached)
-      else pending.push(image)
-    }
     const config = this.visionConfig()
-    for (const image of pending) {
-      const stored = await this.ctx.attachments.readImage(image.attachment, options.signal)
+    await Promise.all(images.map(async (image) => {
+      const id = String(image.attachmentId)
+      const cached = this.captions.get(id)
+      if (cached !== undefined) {
+        captions.set(id, cached)
+        return
+      }
+      const stored = await this.ctx.attachments.readImage({
+        attachmentId: id,
+        mediaType: image.mediaType,
+        bytes: image.bytes,
+        width: image.width,
+        height: image.height,
+        ...(image.name === undefined ? {} : { name: image.name }),
+      }, signal)
       const caption = await captionImage(config, {
-        attachmentId: String(image.attachment.attachmentId),
+        attachmentId: id,
         mediaType: stored.ref.mediaType,
-        ...(image.attachment.name === undefined ? {} : { name: image.attachment.name }),
+        ...(image.name === undefined ? {} : { name: image.name }),
         data: stored.data,
-      }, options.signal)
-      const id = String(image.attachment.attachmentId)
-      this.captions.set(id, caption)
-      captions.set(id, caption)
-    }
+      }, signal)
+      const trimmed = caption.trim()
+      if (trimmed.length === 0) throw new Error('vision-bridge: vision model returned empty content')
+      this.captions.set(id, trimmed)
+      captions.set(id, trimmed)
+    }))
+    return captions
+  }
+
+  private async captionAndRewrite(options: GenerateOptions): Promise<GenerateOptions> {
+    const images = uniqueRequestImages(options.messages).map(lookAtArgFromImage)
+    const captions = await this.captionRefs(images, options.signal)
     return rewriteOptions(options, captions)
   }
 

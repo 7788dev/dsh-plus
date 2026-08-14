@@ -1,11 +1,12 @@
 /** OpenAI-compatible vision captioning against a configured VL endpoint. */
 
-const DEFAULT_TIMEOUT_MS = 60_000
+const TEST_TIMEOUT_MS = 30_000
+const CAPTION_TIMEOUT_MS = 180_000
 
 const CAPTION_PROMPT = [
-  'Describe this image thoroughly so a text-only assistant can understand it.',
-  'Cover the scene, objects, people, layout, and any visible text (transcribe exactly).',
-  'Do not mention that you are a vision model. Do not ask follow-up questions.',
+  'Describe this image for a text-only assistant.',
+  'Cover the scene, layout, and transcribe visible text exactly.',
+  'Be concise. Do not mention that you are a vision model. Do not ask follow-up questions.',
 ].join(' ')
 
 export interface VisionClientConfig {
@@ -26,8 +27,8 @@ function joinEndpoint(baseURL: string, path: string): string {
   return `${base}${path.startsWith('/') ? path : `/${path}`}`
 }
 
-function combineSignal(signal: AbortSignal | undefined): AbortSignal {
-  const timeout = AbortSignal.timeout(DEFAULT_TIMEOUT_MS)
+function combineSignal(signal: AbortSignal | undefined, timeoutMs: number): AbortSignal {
+  const timeout = AbortSignal.timeout(timeoutMs)
   return signal === undefined ? timeout : AbortSignal.any([signal, timeout])
 }
 
@@ -48,7 +49,7 @@ function errorMessageFromBody(value: unknown, fallback: string): string {
 }
 
 function textFromContent(content: unknown): string {
-  if (typeof content === 'string') return content.trim()
+  if (typeof content === 'string') return content
   if (!Array.isArray(content)) return ''
   const parts: string[] = []
   for (const item of content) {
@@ -56,7 +57,35 @@ function textFromContent(content: unknown): string {
     if (record === undefined) continue
     if (typeof record.text === 'string') parts.push(record.text)
   }
-  return parts.join('').trim()
+  return parts.join('')
+}
+
+function captionMessages(image: VisionImageBytes): unknown {
+  return [
+    {
+      role: 'user',
+      content: [
+        { type: 'text', text: CAPTION_PROMPT },
+        {
+          type: 'image_url',
+          image_url: { url: `data:${image.mediaType};base64,${bytesToBase64(image.data)}` },
+        },
+      ],
+    },
+  ]
+}
+
+function textFromCompletion(value: unknown): string {
+  const record = asRecord(value)
+  const choices = record === undefined ? undefined : record.choices
+  const first = Array.isArray(choices) ? asRecord(choices[0]) : undefined
+  if (first === undefined) return ''
+  const message = asRecord(first.message)
+  if (message === undefined) return ''
+  const content = textFromContent(message.content)
+  if (content.length > 0) return content
+  if (typeof message.reasoning_content === 'string') return message.reasoning_content
+  return ''
 }
 
 async function readJson(response: Response): Promise<unknown> {
@@ -87,7 +116,7 @@ async function authorizedJson(input: {
   const response = await fetch(joinEndpoint(input.config.baseURL, input.path), {
     method: input.method,
     headers,
-    signal: combineSignal(input.signal),
+    signal: combineSignal(input.signal, TEST_TIMEOUT_MS),
     ...(input.body === undefined ? {} : { body: JSON.stringify(input.body) }),
   })
   const value = await readJson(response)
@@ -119,39 +148,33 @@ export async function testVisionConnection(
   }
 }
 
-/** Caption one image; throws when the vision endpoint refuses or returns empty text. */
+/**
+ * Caption one image with a non-streaming chat completion.
+ * Streaming is unused here: the 识图 tool only shows the finished result.
+ */
 export async function captionImage(
   config: VisionClientConfig,
   image: VisionImageBytes,
   signal?: AbortSignal,
 ): Promise<string> {
-  const dataUrl = `data:${image.mediaType};base64,${bytesToBase64(image.data)}`
-  const { status, value } = await authorizedJson({
-    config,
-    path: '/chat/completions',
+  const response = await fetch(joinEndpoint(config.baseURL, '/chat/completions'), {
     method: 'POST',
-    signal,
-    body: {
-      model: config.model,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: CAPTION_PROMPT },
-            { type: 'image_url', image_url: { url: dataUrl } },
-          ],
-        },
-      ],
+    headers: {
+      Authorization: `Bearer ${config.apiKey.trim()}`,
+      'Content-Type': 'application/json',
     },
+    signal: combineSignal(signal, CAPTION_TIMEOUT_MS),
+    body: JSON.stringify({
+      model: config.model,
+      stream: false,
+      messages: captionMessages(image),
+    }),
   })
-  if (status < 200 || status >= 300) {
-    throw new Error(`vision-bridge: vision model failed: ${errorMessageFromBody(value, `HTTP ${String(status)}`)}`)
+  const value = await readJson(response)
+  if (!response.ok) {
+    throw new Error(`vision-bridge: vision model failed: ${errorMessageFromBody(value, `HTTP ${String(response.status)}`)}`)
   }
-  const record = asRecord(value)
-  const choices = record === undefined ? undefined : record.choices
-  const first = Array.isArray(choices) ? asRecord(choices[0]) : undefined
-  const message = first === undefined ? undefined : asRecord(first.message)
-  const text = message === undefined ? '' : textFromContent(message.content)
+  const text = textFromCompletion(value).trim()
   if (text.length === 0) throw new Error('vision-bridge: vision model returned empty content')
   return text
 }
