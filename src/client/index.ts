@@ -1,9 +1,10 @@
 /** MCP server catalog registered into Web Settings. */
 
-import type {} from '@deepseek-ai/dsh-api-remotes/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
+import mcpSettingsRemote from '../remote.js'
+import type { McpServerUpsertRequest, McpSettingsSnapshot } from '../types.ts'
 import { McpSettingsTab, type McpSettingsTabInjected } from './McpSettingsTab.tsx'
 import { en, zh, type McpSettingsLocaleKey } from './locales.ts'
 
@@ -20,19 +21,35 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 /** Dictionary namespace owned by this plugin. */
 export const NS = 'settings.mcp'
 
-/** Services required by the Settings registration and generated Remote face. */
-export const inject = ['slots', 'locale', 'remote', 'remote.mcpSettings']
+/** Services required by the Settings registration; mcpSettings is mounted in apply. */
+export const inject = ['slots', 'locale', 'remote']
+
+type RemoteResult<T> =
+  | { readonly ok: true; readonly value: T }
+  | { readonly ok: false; readonly error: { readonly code: string; readonly message: string } }
+
+type McpSettingsRemote = {
+  list: () => Promise<RemoteResult<McpSettingsSnapshot>>
+  upsert: (request: McpServerUpsertRequest) => Promise<RemoteResult<{ ok: true }>>
+  delete: (request: { serverName: string }) => Promise<RemoteResult<{ ok: true }>>
+}
 
 /**
- * Contribute the MCP tab to the Plugins settings section.
- * @param ctx - browser plugin context carrying slots, locale, and the generated Remote.
+ * Mount the Host Remote if this dsh assembly did not already, then contribute the MCP tab.
+ * @param ctx - browser plugin context carrying slots, locale, and the Client Remote.
  */
-export function apply(ctx: ClientContext): void {
+export async function apply(ctx: ClientContext): Promise<void> {
+  const remote = ctx.remote as ClientContext['remote'] & { mcpSettings?: McpSettingsRemote }
+  if (remote.mcpSettings === undefined) {
+    const unmount = await ctx.remote.$mount(mcpSettingsRemote)
+    ctx.effect(() => unmount, 'dsh-plus: mcpSettings remote')
+  }
+
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-settings-mcp: dictionaries')
 
   const t = ctx.locale.bind(NS)
   const wrap = async <T>(
-    result: Promise<{ ok: true; value: T } | { ok: false; error: { code: string; message: string } }>,
+    result: Promise<RemoteResult<T>>,
     name: string,
   ): Promise<T> => {
     const resolved = await result
@@ -41,13 +58,14 @@ export function apply(ctx: ClientContext): void {
     }
     return resolved.value
   }
+  const mcpSettings = (ctx.remote as ClientContext['remote'] & { mcpSettings: McpSettingsRemote }).mcpSettings
   const injected = (): McpSettingsTabInjected => ({
-    list: () => wrap(ctx.remote.mcpSettings.list(), 'mcpSettings.list'),
+    list: () => wrap(mcpSettings.list(), 'mcpSettings.list'),
     upsert: async (request) => {
-      await wrap(ctx.remote.mcpSettings.upsert(request), 'mcpSettings.upsert')
+      await wrap(mcpSettings.upsert(request), 'mcpSettings.upsert')
     },
     remove: async (serverName) => {
-      await wrap(ctx.remote.mcpSettings.delete({ serverName }), 'mcpSettings.delete')
+      await wrap(mcpSettings.delete({ serverName }), 'mcpSettings.delete')
     },
   })
 

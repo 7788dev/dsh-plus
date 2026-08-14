@@ -1,0 +1,8 @@
+# Applied when a profile lists this package in dsh.profile.bundles.
+# One Loader row: Host default export is the mcpSettings Gateway;
+# client-modules also scans dsh.client and loads ./client in the browser.
+- insert:
+    - id: mcp-settings
+      name: dsh-plus
+      config:
+        path: !!js dshHomePath('mcp-servers.json')

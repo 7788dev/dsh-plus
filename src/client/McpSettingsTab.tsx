@@ -3,7 +3,7 @@ import type {
   McpServerUpsertRequest,
   McpServerView,
   McpSettingsSnapshot,
-} from '@deepseek-ai/dsh-api-remotes/client'
+} from '../types.ts'
 import {
   Button,
   IconPlusOutline16,
