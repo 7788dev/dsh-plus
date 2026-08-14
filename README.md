@@ -340,3 +340,9 @@ pnpm build
 ## License
 
 [MIT](LICENSE) © 7788dev
+
+---
+
+<div align="center">
+<sub>友链 · <a href="https://linux.do"><img src="docs/linux-do.svg" width="12" height="12" align="absmiddle" alt=""> linux.do</a></sub>
+</div>
