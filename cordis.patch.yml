@@ -6,3 +6,7 @@
       name: dsh-plus
       config:
         path: !!js dshHomePath('mcp-servers.json')
+    - id: vision-bridge
+      name: dsh-plus/vision
+      config:
+        path: !!js dshHomePath('vision-bridge.json')

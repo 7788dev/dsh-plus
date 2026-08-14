@@ -1,6 +1,6 @@
 /**
- * Browser client bundle for dsh-plus. Host artifacts are committed under lib/;
- * this config only emits lib/client.js with ModuleLoader id `dsh-plus`.
+ * Browser client bundle plus the Vision Bridge Host entry.
+ * MCP Host remains the committed lib/index.js.
  */
 import { createRequire } from 'node:module'
 import { existsSync } from 'node:fs'
@@ -102,4 +102,20 @@ const config: UserConfig = {
   },
 }
 
-export default config
+const visionConfig: UserConfig = {
+  name: `${ID}/vision`,
+  entry: { vision: 'src/host/vision/index.ts' },
+  outDir: 'lib',
+  format: 'esm',
+  platform: 'node',
+  target: 'es2022',
+  dts: false,
+  sourcemap: false,
+  clean: false,
+  external: [/^node:/, /^@deepseek-ai\//],
+  outputOptions: {
+    entryFileNames: 'vision.js',
+  },
+}
+
+export default [config, visionConfig]
