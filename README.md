@@ -13,7 +13,7 @@ No fork, no patching the harness.
 [![DeepSeek Harness](https://img.shields.io/badge/DeepSeek%20Harness-plugin-111.svg)](https://github.com/deepseek-ai/deepseek-harness)
 [![Install](https://img.shields.io/badge/install-dsh%20plugin%20add-0b7285.svg)](#安装)
 
-<img src="docs/vision-look-at.png" alt="聊天里贴图，触发 look_at_image 工具调用，原文本模型据此作答" width="820" />
+<img src="docs/vision-look-at.png" alt="聊天里贴图，触发 look_at_image 工具调用，原文本模型据此作答" width="720" />
 
 <sub>贴图 → <code>look_at_image</code> 工具调用 → 原文本模型作答</sub>
 
@@ -27,6 +27,7 @@ No fork, no patching the harness.
 - [特性](#特性)
 - [环境要求](#环境要求)
 - [安装](#安装)
+- [界面预览](#界面预览)
 - [MCP 服务器](#mcp-服务器)
 - [视觉桥接](#视觉桥接)
 - [工作原理](#工作原理)
@@ -113,6 +114,29 @@ dsh plugin --profile web remove dsh-plus
 配置文件不会被删除，重新安装即可恢复。
 
 </details>
+
+## 界面预览
+
+<div align="center">
+<table>
+<tr>
+<td width="50%" valign="top" align="center">
+<img src="docs/settings-mcp.png" alt="设置页 MCP 标签，列出已配置的 MCP 服务器" width="100%" /><br>
+<sub><b>MCP 标签</b> · 服务器状态与工具数一览</sub>
+</td>
+<td width="50%" valign="top" align="center">
+<img src="docs/settings-mcp-form.png" alt="添加 MCP 服务器表单，可填写传输方式、命令、参数与环境变量" width="100%" /><br>
+<sub><b>添加服务器</b> · stdio / HTTP 两种传输</sub>
+</td>
+</tr>
+<tr>
+<td colspan="2" align="center">
+<img src="docs/settings-vision.png" alt="视觉标签，配置多模态接口并按模型勾选外挂视觉" width="62%" /><br>
+<sub><b>视觉标签</b> · 配置 VL 接口，按提供方逐个勾选文本模型</sub>
+</td>
+</tr>
+</table>
+</div>
 
 ## MCP 服务器
 
@@ -344,5 +368,5 @@ pnpm build
 ---
 
 <div align="center">
-<sub>友链 · <a href="https://linux.do"><img src="docs/linux-do.svg" width="12" height="12" align="absmiddle" alt=""> linux.do</a></sub>
+<sub>友链 · <a href="https://linux.do"><img src="docs/linux-do.svg" width="18" height="18" align="absmiddle" alt=""> <b>linux.do</b></a></sub>
 </div>
