@@ -1,6 +1,6 @@
 {
   "name": "dsh-plus",
-  "description": "Installable dsh bundle: Settings → Plugins → MCP catalog and Vision Bridge",
+  "description": "DeepSeek Harness plugin: MCP catalog in Settings, and Vision Bridge so text-only models can read chat images",
   "version": "0.1.0",
   "license": "MIT",
   "type": "module",
